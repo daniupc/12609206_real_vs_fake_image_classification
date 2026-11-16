@@ -1,1 +1,16 @@
 *.pdf
+.DS_Store
+
+# Local agent handoff/instructions
+/AGENTS.md
+/PROJECT_CONTEXT.md
+
+# Defactify images and Hugging Face caches (not redistributable here)
+/data/
+
+# Local experiment artifacts
+/outputs/
+/checkpoints/
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
