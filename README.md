@@ -50,9 +50,9 @@ The notebook builds the model in stages:
 
 The main error metric is **balanced error rate = 1 − balanced accuracy** on the binary real/fake task, because the dataset has a 1:5 real/generated class imbalance. The notebook reports balanced accuracy alongside it, plus precision, recall, F1, AUROC, a confusion matrix, and recall by source for the final evaluation. Predicting "AI-generated" for every image would already give 83.3% ordinary accuracy while missing every real photograph, so ordinary accuracy alone is not a useful target.
 
-The proposed target is **balanced error rate ≤ 0.10 on the repaired, held-out test split** (equivalently balanced accuracy ≥ 0.90). This target is being stated after seeing the earlier validation scores, but before running the final test; it is not an independent pre-registered target. A practical validation milestone is at least 0.96 balanced accuracy and improvement over both simpler baselines. Neither threshold proves generalization outside Defactify.
+The proposed target was **balanced error rate ≤ 0.10 on the repaired, held-out test split** (equivalently balanced accuracy ≥ 0.90). It was stated after seeing an earlier validation run but before the one-time final test, so it was not independently pre-registered. The observed final-test balanced error is **0.1192**, which misses the target. Neither threshold proves generalization outside Defactify.
 
-An earlier notebook run printed these validation results. That run did not save model checkpoints or epoch CSVs, so these numbers must be reproduced by the new checkpointed pipeline before they are treated as durable experimental results:
+An earlier notebook run printed these validation results without saving checkpoints or epoch CSVs. They have since been superseded by the checkpointed results in [RESULTS.md](RESULTS.md):
 
 | Model | Best validation balanced accuracy |
 | --- | ---: |
@@ -60,7 +60,7 @@ An earlier notebook run printed these validation results. That run did not save 
 | RGB/Fourier concatenation | 0.9586 |
 | RGB/Fourier attention + auxiliary source head | 0.9655 |
 
-The attention + auxiliary model led that earlier validation run. The final test result should remain sealed until the checkpointed runs and notebook settings are fixed. Robustness checks for compression/resizing, a held-out-generator experiment, and a frozen-CLIP comparison remain future work unless there is time after the main Assignment 2 run.
+The checkpointed attention + auxiliary model reached 0.9658 validation balanced accuracy, but only 0.8808 on the one-time test. The main concern is generated-image recall falling from 0.9534 to 0.7827. The notebook now includes artifact-only diagnostic tables and optional validation-only source/threshold checks; the viewed test must not become a tuning set. Compression/resizing controls, held-out-generator evaluation, and a frozen-CLIP comparison remain future work.
 
 ## Reproducing the project
 
@@ -99,7 +99,7 @@ black --check --ipynb 01_defactify.ipynb
 
 The first dataset download needs enough free disk space for the Hugging Face cache. The notebook pins Defactify revision `1c3b714c9691eb6dd11c2c1e92eab1ac29584fa0`. Use `RUN_DOWNLOAD=True` only for the first download. For normal offline reruns with an existing cache, use `RUN_LOAD_DATASET=True`, `RUN_DOWNLOAD=False`, and `RUN_AUDIT=True` so the leakage-safe split is rebuilt and checked before training.
 
-Training should only run after the audit passes. When `RUN_TRAIN=True`, the notebook trains the three experiments above, prints the device, split sizes, audit summary, experiment name, epoch, losses, balanced accuracy, and best validation score. The checkpoint and logging contract for the rerun is:
+Training should only run after the audit passes. The completed notebook now defaults to `RUN_TRAIN=False`, `RUN_EXPORT_FINAL=False`, and `RUN_FINAL_TEST=False` to avoid accidental reruns. When deliberately enabled, training prints the device, split sizes, audit summary, experiment name, epoch, losses, balanced accuracy, and best validation score. The artifact-only results cell can be run without loading data. The checkpoint and logging contract is:
 
 | Artifact | Purpose |
 | --- | --- |
@@ -122,7 +122,7 @@ result = detector.predict("path/to/uploaded_image.jpg")
 print(result["ai_probability"], result["caution"])
 ```
 
-The bundle is generated only after the three checkpointed training runs complete. The returned score is an estimate, not proof about an individual image.
+The bundle was generated after the three checkpointed training runs completed. The returned score is an estimate, not proof about an individual image.
 
 ## Assignment 2 status
 
@@ -130,8 +130,8 @@ The bundle is generated only after the three checkpointed training runs complete
 | --- | --- |
 | Implement the project | Notebook implements loading, audit/repair, three model variants, validation comparison, and final-test code. The final frontend is deferred to Assignment 3. |
 | Metric and target | Main error metric is binary balanced error rate. Proposed final-test target is ≤ 0.10, declared after the earlier validation run; 0.96 validation balanced accuracy is a practical milestone. |
-| Achieved metric | An earlier, non-checkpointed notebook run printed 0.9655 validation balanced accuracy for RGB/Fourier attention + auxiliary. A durable rerun and final test metric are still pending. |
-| Tests | The unit tests cover split repair, model output shapes, image preprocessing for inference, checkpoint loading, binary metrics, CSV epoch logging, checkpoint resume, and final-model export. |
+| Achieved metric | Checkpointed attention + auxiliary reached 0.9658 validation balanced accuracy and 0.8808 final-test balanced accuracy (test BER 0.1192). The ≤ 0.10 BER target was missed. See [RESULTS.md](RESULTS.md). |
+| Tests | The unit tests cover split repair, model output shapes, image preprocessing for inference, checkpoint loading, binary/source metrics, validation-only threshold selection, CSV epoch logging, checkpoint resume, and final-model export. |
 | Easy run | `environment.yml`, `requirements.txt`, and the commands above document setup and notebook execution. |
 | Python version | Python 3.11. |
 | No binaries in Git | `.gitignore` excludes PDFs, data caches, outputs, checkpoints, notebooks checkpoints, and Python caches. |
