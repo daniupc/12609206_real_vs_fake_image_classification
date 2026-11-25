@@ -62,6 +62,8 @@ An earlier notebook run printed these validation results without saving checkpoi
 
 The checkpointed attention + auxiliary model reached 0.9658 validation balanced accuracy, but only 0.8808 on the one-time test. The main concern is generated-image recall falling from 0.9534 to 0.7827. The notebook now includes artifact-only diagnostic tables and optional validation-only source/threshold checks; the viewed test must not become a tuning set. Compression/resizing controls, held-out-generator evaluation, and a frozen-CLIP comparison remain future work.
 
+A temporary cell immediately before training compares original image dimensions, JPEG quantization/subsampling, file sizes, and caption-group sizes across the audited repaired splits, separately for each source. It scans all 96,000 image headers without scoring models or changing data. Full descriptive tables stay local in `outputs/split_metadata/`. Set `RUN_SPLIT_METADATA_DIAGNOSTICS=False` to skip it; it can be removed if the comparison is uninformative. Differences are exploratory observations, not proof of the cause of the test gap.
+
 ## Reproducing the project
 
 The code is developed with Python 3.11. Dependencies are listed in both [environment.yml](environment.yml) and [requirements.txt](requirements.txt).
