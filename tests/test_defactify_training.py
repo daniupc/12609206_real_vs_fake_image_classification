@@ -6,7 +6,14 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from defactify_training import binary_metrics, export_final_model, train_experiment
+from defactify_training import (
+    binary_metrics,
+    collect_predictions,
+    export_final_model,
+    select_balanced_threshold,
+    source_recall,
+    train_experiment,
+)
 
 
 class TinyDataset(Dataset):
@@ -40,6 +47,36 @@ class TrainingTests(unittest.TestCase):
         self.assertAlmostEqual(result["balanced_accuracy"], 0.5)
         self.assertAlmostEqual(result["balanced_error_rate"], 0.5)
         self.assertEqual(result["confusion_matrix_real_ai"], [[1, 1], [1, 1]])
+
+    def test_validation_threshold_and_source_recall(self):
+        labels = [0, 0, 1, 1]
+        sources = [0, 0, 1, 2]
+        logits = [-3, -2, -1, 1]
+        chosen = select_balanced_threshold(labels, logits)
+        self.assertEqual(chosen["threshold_logit"], -1)
+        self.assertEqual(chosen["validation_balanced_accuracy"], 1.0)
+        self.assertEqual(chosen["default_validation_balanced_accuracy"], 0.75)
+        self.assertEqual(
+            binary_metrics(labels, logits, threshold_logit=-1)[
+                "confusion_matrix_real_ai"
+            ],
+            [[2, 0], [0, 2]],
+        )
+        self.assertEqual(source_recall(labels, sources, logits)[1]["recall"], 0.0)
+        self.assertEqual(source_recall(labels, sources, logits, -1)[1]["recall"], 1.0)
+        with self.assertRaises(ValueError):
+            select_balanced_threshold([0, 0], [-1, 1])
+        with self.assertRaises(ValueError):
+            source_recall(labels, sources[:-1], logits)
+
+    def test_collect_predictions_keeps_split_labels_and_sources(self):
+        model = TinyDetector()
+        labels, sources, logits = collect_predictions(
+            model, DataLoader(TinyDataset(), batch_size=2), torch.device("cpu")
+        )
+        self.assertEqual(labels.tolist(), [0, 1, 0, 1])
+        self.assertEqual(sources.tolist(), [0, 1, 0, 1])
+        self.assertEqual(len(logits), 4)
 
     def test_epoch_csv_checkpoints_resume_and_export(self):
         torch.manual_seed(1)

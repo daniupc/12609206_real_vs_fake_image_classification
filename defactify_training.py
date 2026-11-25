@@ -18,11 +18,11 @@ from sklearn.metrics import (
 )
 
 
-def binary_metrics(labels, logits):
+def binary_metrics(labels, logits, threshold_logit=0.0):
     labels = np.asarray(labels, dtype=int)
     logits = np.asarray(logits, dtype=float)
     probabilities = 1 / (1 + np.exp(-np.clip(logits, -80, 80)))
-    predictions = (probabilities >= 0.5).astype(int)
+    predictions = (logits >= threshold_logit).astype(int)
     precision, recall, f1, _ = precision_recall_fscore_support(
         labels, predictions, average="binary", zero_division=0
     )
@@ -42,6 +42,78 @@ def binary_metrics(labels, logits):
             labels, predictions, labels=[0, 1]
         ).tolist(),
     }
+
+
+def source_recall(labels, sources, logits, threshold_logit=0.0):
+    """Count correct predictions per source, including real (source zero)."""
+    labels = np.asarray(labels, dtype=int)
+    sources = np.asarray(sources, dtype=int)
+    logits = np.asarray(logits, dtype=float)
+    if not (len(labels) == len(sources) == len(logits)):
+        raise ValueError("Labels, sources, and logits must have equal lengths")
+    predictions = logits >= threshold_logit
+    return {
+        int(source): {
+            "count": int(mask.sum()),
+            "correct": int((predictions[mask] == labels[mask]).sum()),
+            "recall": float((predictions[mask] == labels[mask]).mean()),
+        }
+        for source in np.unique(sources)
+        if (mask := sources == source).any()
+    }
+
+
+def select_balanced_threshold(labels, logits):
+    """Choose a logit threshold by validation balanced accuracy only.
+
+    On ties, prefer the threshold closest to the original zero-logit cutoff.
+    This must never be fitted on test predictions.
+    """
+    labels = np.asarray(labels, dtype=int)
+    logits = np.asarray(logits, dtype=float)
+    if len(labels) != len(logits) or len(np.unique(labels)) != 2:
+        raise ValueError("Equal-length labels/logits with both classes are required")
+    if not np.isfinite(logits).all():
+        raise ValueError("Logits must be finite")
+    candidates = np.unique(np.append(logits, 0.0))
+    positives = labels == 1
+    negatives = ~positives
+    order = np.argsort(logits)[::-1]
+    sorted_logits = logits[order]
+    sorted_pos = np.cumsum(positives[order])
+    sorted_neg = np.cumsum(negatives[order])
+    included = np.searchsorted(-sorted_logits, -candidates, side="right")
+    tp = np.where(included > 0, sorted_pos[np.maximum(included - 1, 0)], 0)
+    fp = np.where(included > 0, sorted_neg[np.maximum(included - 1, 0)], 0)
+    scores = (tp / positives.sum() + 1 - fp / negatives.sum()) / 2
+    best = np.flatnonzero(np.isclose(scores, scores.max(), atol=1e-12, rtol=0))
+    chosen = min(best, key=lambda index: (abs(candidates[index]), candidates[index]))
+    threshold = float(candidates[chosen])
+    return {
+        "threshold_logit": threshold,
+        "threshold_probability": float(1 / (1 + np.exp(-np.clip(threshold, -80, 80)))),
+        "validation_balanced_accuracy": float(scores[chosen]),
+        "default_validation_balanced_accuracy": binary_metrics(labels, logits)[
+            "balanced_accuracy"
+        ],
+    }
+
+
+def collect_predictions(model, loader, device):
+    """Return labels, source labels, and logits for one explicitly chosen split."""
+    model.eval()
+    labels, sources, logits = [], [], []
+    with torch.no_grad():
+        for images, batch_labels, batch_sources in loader:
+            batch_logits, _ = model(images.to(device))
+            labels.extend(batch_labels.tolist())
+            sources.extend(batch_sources.tolist())
+            logits.extend(batch_logits.cpu().tolist())
+    return (
+        np.asarray(labels, dtype=int),
+        np.asarray(sources, dtype=int),
+        np.asarray(logits),
+    )
 
 
 def run_epoch(
