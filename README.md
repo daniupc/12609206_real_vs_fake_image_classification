@@ -1,14 +1,14 @@
 # Detecting AI-generated images
 
-Applied Deep Learning — Assignment 1: Initiate
+Applied Deep Learning — Assignments 1 and 2
 
 ## Project
 
-I want to train a model that can tell a real photograph from an image made by a generative model. I will use the [Defactify Image Dataset](https://huggingface.co/datasets/Rajarshi-Roy-research/Defactify_Image_Dataset) and work with all 96,000 images. The task is binary classification: real or AI-generated. I am not trying to detect edits to an otherwise real photo.
+I want to train a model that can tell a real photograph from an image made by a generative model. I use the [Defactify Image Dataset](https://huggingface.co/datasets/Rajarshi-Roy-research/Defactify_Image_Dataset) and keep all 96,000 images. The task is binary classification: real or AI-generated. I am not trying to detect edits to an otherwise real photo.
 
-This is a **Bring your own method** project. My model will look at the image in two ways. One part will process the RGB pixels; another will process a Fourier transform of the image, which shows its frequency patterns. I will first combine the two parts simply, then test whether attention improves the combination. I will also test whether asking the model to identify the image source during training helps the main real/fake decision.
+This is a **Bring your own method** project. The implemented notebook trains a ResNet-18 RGB baseline, a two-branch RGB/Fourier model with simple concatenation, and a two-branch RGB/Fourier model with attention fusion plus an auxiliary source-label head. The comparison is meant to show whether the Fourier branch, attention fusion, and extra source-prediction task help under the same split and metric. The attention and auxiliary-head variant is currently tested as one combined model, so its validation result should not be read as a separate ablation of attention alone or the auxiliary head alone.
 
-I will train a standard ResNet-18 classifier on the same data as a baseline. The point of the comparison is to find out whether the second branch, attention layer, and extra training task actually help. If time allows, I will also compare a frozen CLIP image encoder with a small binary classifier trained on its features. This is a separate baseline, not another branch of my model. I will build a small app where someone can upload an image and see the model's score. The score will be presented as an estimate, not proof that an image is genuine or fake.
+The upload frontend is intentionally deferred to Assignment 3. The Assignment 2 work focuses on the dataset audit, leakage-safe splits, model training code, validation comparison, tests for split repair, training checkpoints, CSV logging, and model-loading utilities, and reproducible instructions. The final app should present the detector score as an estimate, not proof that an image is genuine or fake.
 
 ## Related research
 
@@ -34,24 +34,123 @@ The [Defactify dataset](https://huggingface.co/datasets/Rajarshi-Roy-research/De
 | Midjourney v6 | 16,000 | 5 |
 | **Total** | **96,000** | |
 
-The dataset card lists 42,000 training images, 9,000 validation images, and 45,000 test images. It provides the image, caption, binary real/fake label, and source label. Hugging Face lists the files at about 7.51 GB. I will download the full dataset, but not put the images in the Git repository.
+The dataset card lists 42,000 training images, 9,000 validation images, and 45,000 test images. It provides the image, caption, binary real/fake label, and source label. Hugging Face lists the files at about 7.51 GB. I download the full dataset locally, but the images and Hugging Face cache stay out of Git.
 
-There are five times as many generated images as real ones. I will keep every image and deal with the imbalance in the training loss rather than discard data. Before training, I will check the labels, image formats, duplicates, and splits. In particular, images made from the same caption should not end up in both training and test data. If the published splits have that problem, I will make new splits by caption and document the change. I will not redistribute the images unless their license allows it.
+There are five times as many generated images as real ones. I keep every image and deal with the imbalance in the training loss rather than discard data.
+
+The pre-training audit found leakage in the published split: 60 normalized-caption groups and 12 exact image-byte groups crossed train/validation/test. The project therefore uses the replacement split documented in [DATA_AUDIT_REPORT.md](DATA_AUDIT_REPORT.md). It groups records transitively by normalized caption or exact image-byte hash, keeps each group inside one split, and preserves all 96,000 images. The repaired split sizes are 41,742 train, 8,784 validation, and 45,474 test records. A second audit found zero measured caption or byte-identical overlap across the repaired splits.
 
 ## Method and tests
 
-I plan to build the model in stages:
+The notebook builds the model in stages:
 
 1. Fine-tune a pretrained ResNet-18 on RGB images to establish a manageable CNN baseline, following the reason for a CNN comparison in Wang et al. rather than claiming their ResNet-50 results for this smaller model.
-2. Add a small convolutional branch that reads the log-magnitude of a 2D Fourier transform. Corvi et al. and Roy et al. motivate looking for frequency clues. I will first join the branches by simple concatenation, as in the spatial-frequency comparison by Yang, so I can measure what the frequency branch adds.
-3. Replace that simple join with a small cross-attention layer, working on reduced-size feature maps to limit memory use. This is my proposed way to let the branches interact, not a benefit established by the cited papers; I will keep it only if it improves the simple fusion under the same evaluation protocol.
-4. Add a second output that predicts the source label: real or one of the five generators. Roy et al.'s dataset provides these labels, but the binary label can already be derived from them. This extra task might help or might make the model rely on fingerprints of known generators, so I will test it separately, including on a generator left out of training.
+2. Add a small convolutional branch that reads the log-magnitude of a 2D Fourier transform. Corvi et al. and Roy et al. motivate looking for frequency clues. The first two-branch version joins the RGB and Fourier features by simple concatenation, as in the spatial-frequency comparison by Yang.
+3. Replace that simple join with a small attention fusion layer and add a second output that predicts the source label: real or one of the five generators. Roy et al.'s dataset provides these labels, but the binary label can already be derived from them. This extra task might help, or it might make the model rely on fingerprints of known generators, so it needs cautious interpretation.
 
-If time allows, I will also train a linear real/fake classifier on features from a frozen CLIP image encoder, following the comparison motivated by Ojha et al. Only the classifier will be trained on Defactify; CLIP's weights will stay fixed. This tests whether general pretrained image features transfer better than the detectors trained for this dataset, without treating CLIP as a guaranteed winner.
+The main error metric is **balanced error rate = 1 − balanced accuracy** on the binary real/fake task, because the dataset has a 1:5 real/generated class imbalance. The notebook reports balanced accuracy alongside it, plus precision, recall, F1, AUROC, a confusion matrix, and recall by source for the final evaluation. Predicting "AI-generated" for every image would already give 83.3% ordinary accuracy while missing every real photograph, so ordinary accuracy alone is not a useful target.
 
-I will use the validation set to choose settings and keep the test set for final results. I will report a confusion matrix, balanced accuracy, precision, recall, F1, and AUROC. I will also show results for each generator. To check how fragile the model is, I will test compressed and resized images and run one experiment with a generator left out of training. In that experiment, I will evaluate the real/fake output only. Across the project I will use the full dataset, although the held-out generator is necessarily absent from that particular training run.
+The proposed target is **balanced error rate ≤ 0.10 on the repaired, held-out test split** (equivalently balanced accuracy ≥ 0.90). This target is being stated after seeing the earlier validation scores, but before running the final test; it is not an independent pre-registered target. A practical validation milestone is at least 0.96 balanced accuracy and improvement over both simpler baselines. Neither threshold proves generalization outside Defactify.
 
-The comparisons will show what each part of the model changes. A more complex model may do worse, especially on a new generator, and that would still be a useful result. Because five out of six images are generated, predicting "AI-generated" for every image would already give 83.3% overall accuracy while missing every real photograph; I will not use accuracy alone to judge a model. Given the time available, the full-data RGB baseline and one finished two-branch model come first. The frozen-CLIP comparison, attention, and auxiliary-head ablations follow if time permits.
+An earlier notebook run printed these validation results. That run did not save model checkpoints or epoch CSVs, so these numbers must be reproduced by the new checkpointed pipeline before they are treated as durable experimental results:
+
+| Model | Best validation balanced accuracy |
+| --- | ---: |
+| RGB ResNet-18 baseline | 0.9482 |
+| RGB/Fourier concatenation | 0.9586 |
+| RGB/Fourier attention + auxiliary source head | 0.9655 |
+
+The attention + auxiliary model led that earlier validation run. The final test result should remain sealed until the checkpointed runs and notebook settings are fixed. Robustness checks for compression/resizing, a held-out-generator experiment, and a frozen-CLIP comparison remain future work unless there is time after the main Assignment 2 run.
+
+## Reproducing the project
+
+The code is developed with Python 3.11. Dependencies are listed in both [environment.yml](environment.yml) and [requirements.txt](requirements.txt).
+
+Fresh Conda setup:
+
+```bash
+conda env create -f environment.yml
+conda activate applied
+python -m ipykernel install --user --name applied --display-name "Python (applied)"
+jupyter lab 01_defactify.ipynb
+```
+
+If Conda is not available, create a Python 3.11 virtual environment and install the same package set:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+jupyter lab 01_defactify.ipynb
+```
+
+Run the lightweight tests from the activated `applied` environment with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Python source files and notebook code cells were formatted with Black 24.10.0. To check or repeat formatting, install the optional development formatter (`python -m pip install 'black[jupyter]==24.10.0'`) and run:
+
+```bash
+black --check defactify_*.py tests/*.py
+black --check --ipynb 01_defactify.ipynb
+```
+
+The first dataset download needs enough free disk space for the Hugging Face cache. The notebook pins Defactify revision `1c3b714c9691eb6dd11c2c1e92eab1ac29584fa0`. Use `RUN_DOWNLOAD=True` only for the first download. For normal offline reruns with an existing cache, use `RUN_LOAD_DATASET=True`, `RUN_DOWNLOAD=False`, and `RUN_AUDIT=True` so the leakage-safe split is rebuilt and checked before training.
+
+Training should only run after the audit passes. When `RUN_TRAIN=True`, the notebook trains the three experiments above, prints the device, split sizes, audit summary, experiment name, epoch, losses, balanced accuracy, and best validation score. The checkpoint and logging contract for the rerun is:
+
+| Artifact | Purpose |
+| --- | --- |
+| `checkpoints/<experiment>/last.pt` | Latest checkpoint for that experiment. |
+| `checkpoints/<experiment>/best.pt` | Best validation checkpoint for that experiment. |
+| `outputs/epochs_<experiment>.csv` | Per-epoch train/validation metrics saved with pandas. |
+| `outputs/final_model.pt` | Frontend-safe checkpoint bundle for the selected model. |
+| `outputs/final_weights.pt` | Selected model weights only, for code that reconstructs the architecture separately. |
+| `outputs/final_model.json` | Metadata needed by the frontend, including selected experiment and image size. |
+
+The repository ignores `data/`, `outputs/`, and `checkpoints/`, so datasets, model weights, and generated experiment outputs are not committed.
+
+For Assignment 3, the frontend can load the exported bundle without opening the notebook or downloading pretrained weights:
+
+```python
+from defactify_models import load_detector
+
+detector = load_detector("outputs/final_model.pt", device="cpu")
+result = detector.predict("path/to/uploaded_image.jpg")
+print(result["ai_probability"], result["caution"])
+```
+
+The bundle is generated only after the three checkpointed training runs complete. The returned score is an estimate, not proof about an individual image.
+
+## Assignment 2 status
+
+| Requirement | Current project status |
+| --- | --- |
+| Implement the project | Notebook implements loading, audit/repair, three model variants, validation comparison, and final-test code. The final frontend is deferred to Assignment 3. |
+| Metric and target | Main error metric is binary balanced error rate. Proposed final-test target is ≤ 0.10, declared after the earlier validation run; 0.96 validation balanced accuracy is a practical milestone. |
+| Achieved metric | An earlier, non-checkpointed notebook run printed 0.9655 validation balanced accuracy for RGB/Fourier attention + auxiliary. A durable rerun and final test metric are still pending. |
+| Tests | The unit tests cover split repair, model output shapes, image preprocessing for inference, checkpoint loading, binary metrics, CSV epoch logging, checkpoint resume, and final-model export. |
+| Easy run | `environment.yml`, `requirements.txt`, and the commands above document setup and notebook execution. |
+| Python version | Python 3.11. |
+| No binaries in Git | `.gitignore` excludes PDFs, data caches, outputs, checkpoints, notebooks checkpoints, and Python caches. |
+
+Actual programming hours were not tracked during the work already done, so I should not invent them for the report. The table below is the honest Assignment 2 status:
+
+| WBS item | Estimated hours | Actual hours |
+| --- | ---: | --- |
+| Download and check the dataset; prepare images and labels | 8 | Not recorded |
+| Design and code the baseline and two-branch model | 12 | Not recorded |
+| Train and tune the models | 12 | Not recorded |
+| Evaluate results and inspect mistakes | 8 | Not recorded |
+| Build and test the upload app | 5 | Deferred to Assignment 3 |
+| **Programming exercise** | **45** | **Not recorded** |
+| Write the final report | 6 | Not recorded |
+| Prepare the presentation | 4 | Not recorded |
+| **Report and presentation preparation** | **10** | **Not recorded** |
+| Present the final results | 4 | Not recorded |
+| **Total** | **59** | **Not recorded** |
 
 ## Time plan
 
